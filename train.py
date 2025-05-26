@@ -11,7 +11,7 @@ from statistics import mean
 from dataclasses import asdict
 from datasets import load_dataset, concatenate_datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler
-import torch.distributed as dist
+import torch.distributed as dist # a wrapper around the PyTorch distributed package
 from torch.nn.parallel import DistributedDataParallel
 
 torch.manual_seed(0)
@@ -30,33 +30,42 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def init_dist():
-    dist.init_process_group(backend='nccl')
+    # Initialize distributed training environment
+    dist.init_process_group(backend='nccl') # use nvidia collective communications library (NCCL) for distributed training
     torch.cuda.set_device(dist.get_rank())
 
 def destroy_dist():
+    # Clean up distributed training environment
     dist.destroy_process_group()
 
 def is_dist():
+    # Check if distributed training is available and initialized
     return dist.is_available() and dist.is_initialized()
 
 def is_master():
+    # Check if the current process is the master process (rank 0)
     return dist.get_rank() == 0 if is_dist() else True
 
 def get_world_size():
+    # Get the number of processes in the current distributed training group
     return dist.get_world_size() if is_dist() else 1
 
 def get_rank():
+    # Get the rank of the current process in the distributed training group
     return dist.get_rank() if is_dist() else 0
 
-def dist_gather(o):
+def dist_gather(o): 
+    # Gather an object from all processes in the distributed training group
     o_all = [None for _ in range(dist.get_world_size())]
     dist.all_gather_object(o_all, o)
     return o_all
 
 def wrap_model(model):
+    # Wrap the model in DistributedDataParallel for distributed training
     return DistributedDataParallel(model, device_ids=[dist.get_rank()])
 
 def get_run_name(train_cfg):
+    # Generate a unique run name based on the training configuration
     dataset_size = "full_ds" if train_cfg.data_cutoff_idx is None else f"{train_cfg.data_cutoff_idx}samples"
     batch_size = f"bs{int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}"
     epochs = f"ep{train_cfg.epochs}"
