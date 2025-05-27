@@ -31,7 +31,7 @@ class VQACollator(object):  # Visual Question Answering Collator
         input_ids = encoded_full_sequences["input_ids"]
         attention_mask = encoded_full_sequences["attention_mask"]
         labels = input_ids.clone()
-        labels[:, :-1] = input_ids[:, 1:].clone()
+        labels[:, :-1] = input_ids[:, 1:].clone() # Shift labels to the right for causal language modeling
         labels[:, -1] = -100 #self.tokenizer.pad_token_id
 
         # The tokenizer has different behavior for padding and truncation:
