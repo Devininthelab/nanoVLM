@@ -66,7 +66,7 @@ def wrap_model(model):
 
 def get_run_name(train_cfg):
     # Generate a unique run name based on the training configuration
-    dataset_size = "full_ds" if train_cfg.data_cutoff_idx is None else f"{train_cfg.data_cutoff_idx}samples"
+    dataset_size = "full_ds" if train_cfg.data_cutoff_idx is None else f"{train_cfg.data_cutoff_idx}samples" # train_cfg.data_cutoff_idx = None
     batch_size = f"bs{int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}"
     epochs = f"ep{train_cfg.epochs}"
     learning_rate = f"lr{train_cfg.lr_backbones}-{train_cfg.lr_mp}"
@@ -82,11 +82,22 @@ def get_dataloaders(train_cfg, vlm_cfg):
 
     # Load and combine all training datasets
     combined_train_data = []
+    # train_dataset_name=('ai2d', 'aokvqa', 'chart2text', 'chartqa', 'clevr', 'cocoqa', 'datikz', 'diagram_image_to_text', 
+    # 'docvqa', 'dvqa', 'figureqa', 'finqa', 'geomverse', 'hateful_memes', 'hitab', 'iam', 'iconqa', 'infographic_vqa', 
+    # 'intergps', 'localized_narratives', 'mapqa', 'multihiertt', 'ocrvqa', 'plotqa', 'raven', 'rendered_text', 'robut_sqa', 
+    # 'robut_wikisql', 'robut_wtq', 'scienceqa', 'screen2words', 'st_vqa', 'tabmwp', 'tallyqa', 'tat_qa', 'textcaps', 'textvqa', 
+    # 'tqa', 'vistext', 'visual7w', 'visualmrc', 'vqarad', 'vqav2', 'vsr', 'websight')
     for dataset_name in train_cfg.train_dataset_name:
         train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
         combined_train_data.append(train_ds['train'])
     train_ds = concatenate_datasets(combined_train_data)
     
+    #print(train_ds[0])
+    # {'images': [<PIL.PngImagePlugin.PngImageFile image mode=RGB size=964x575 at 0x7FE2C40CA710>], 
+    # 'texts': [
+    #   {'user': 'Question: How many actions are depicted in the diagram?\nChoices:\nA. 6.\nB. 4.\nC. 8.\nD. 7.\nAnswer with the letter.', 'assistant': 'Answer: D', 'source': 'TQA'}, 
+    #   {'user': 'Question: How many steps are there to the formation of a stump?\nChoices:\nA. 6.\nB. 5.\nC. 10.\nD. 7.\nAnswer with the letter.', 'assistant': 'Answer: D', 'source': 'TQA'}
+    # ]}
     test_ds = load_dataset(train_cfg.test_dataset_path)
     train_ds = train_ds.shuffle(seed=0) # Shuffle the training dataset, so train and val get equal contributions from all concatinated datasets
 
@@ -446,4 +457,5 @@ def test_thing():
 
 if __name__ == "__main__":
     #main()
-    test_thing()
+    # test_thing()
+    get_dataloaders(config.TrainConfig(), config.VLMConfig())
