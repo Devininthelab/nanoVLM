@@ -47,8 +47,8 @@ class VQACollator(object):  # Visual Question Answering Collator
         input_ids = encoded_full_sequences["input_ids"]
         attention_mask = encoded_full_sequences["attention_mask"]
         labels = input_ids.clone()
-        labels[:, :-1] = input_ids[:, 1:].clone()   # shift right
-        labels[:, -1] = -100 #self.tokenizer.pad_token_id   
+        labels[:, :-1] = input_ids[:, 1:].clone() # Shift labels to the right for causal language modeling
+        labels[:, -1] = -100 #self.tokenizer.pad_token_id
 
         # The tokenizer has different behavior for padding and truncation:
         # 1. If the full text (answer + question) is shorter than the max length, it gets padded on the left

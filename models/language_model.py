@@ -132,9 +132,9 @@ class LanguageModelGroupedQueryAttention(nn.Module):
     def forward(self, x, cos, sin, attention_mask=None):
         B, T, C = x.size()
 
-        q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T, head_dim)
-        k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim).transpose(1, 2)  # (B, n_kv_heads, T, head_dim)
-        v = self.v_proj(x).view(B, T, self.n_kv_heads, self.head_dim).transpose(1, 2)  # (B, n_kv_heads, T, head_dim)
+        q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T, head_dim) -> B, n_heads, T, head_dim
+        k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim).transpose(1, 2)  # (B, n_kv_heads, T, head_dim) -> B, n_kv_heads, T, head_dim
+        v = self.v_proj(x).view(B, T, self.n_kv_heads, self.head_dim).transpose(1, 2)  # (B, n_kv_heads, T, head_dim) -> B, n_kv_heads, T, head_dim
         
         # Use precomputed positional embeddings
         q, k = apply_rotary_pos_embd(q, k, cos, sin)
@@ -148,7 +148,8 @@ class LanguageModelGroupedQueryAttention(nn.Module):
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  # [B, 1, 1, T]
             padding_mask = (attention_mask == 0).transpose(-1, -2) # Use this for the manual path
             # Convert to attention mask where 0 keeps values and -inf masks
-            attention_mask = (1.0 - attention_mask) * torch.finfo(q.dtype).min
+            attention_mask = (1.0 - attention_mask) * torch.finfo(q.dtype).min 
+            # [[1, 1, 0, 0], [1, 1, 1, 0]] -> [[0, 0, -inf, -inf], [0, 0, 0, -inf]]
 
         if self.sdpa:
             y = torch.nn.functional.scaled_dot_product_attention(
@@ -170,7 +171,43 @@ class LanguageModelGroupedQueryAttention(nn.Module):
             
             if attention_mask is not None:
                 y = y.masked_fill(padding_mask, 0.0) # Zero out the padded positions in the output
+            """
+            I, love, you, <pad>
+            attn_scores_raw =
+                [[1, 2, 3, 4],   # token "I"
+                [5, 6, 7, 8],    # token "love"
+                [9, 10, 11, 12], # token "you"
+                [13,14,15,16]]   # token "<pad>"
+            causal_mask =
+                [[1, 0, 0, 0],
+                [1, 1, 0, 0],
+                [1, 1, 1, 0],
+                [1, 1, 1, 1]]
 
+            attn_scores_after_causal =
+                [[  1, -inf, -inf, -inf],
+                [  5,    6, -inf, -inf],
+                [  9,   10,   11, -inf],
+                [ 13,   14,   15,   16]]
+
+            attention_mask = [1, 1, 1, 0] -> last token is padding
+            attention_mask_float = (1 - attention_mask) * -inf
+                    = [0, 0, 0, -inf]
+
+            attn_scores = attn_scores + attention_mask_float
+            attn_scores_after_both =
+                [[  1, -inf, -inf, -inf],        # line 1 + [0, 0, 0, -inf]
+                [  5,    6, -inf, -inf],
+                [  9,   10,   11, -inf],
+                [ 13,   14,   15, -inf]]         # line 4 + [0, 0, 0, -inf]
+
+            Then take softmax
+            attn_scores_after_softmax =
+                [[1, 0, 0, 0],   # token "I"
+                [0.2, 0.8, 0, 0],    # token "love"
+                [0.1, 0.2, 0.7, 0],    # token "you"
+                [0.3, 0.1, 0.6, 0]]    # token "<pad>"
+            """
         y = y.transpose(1, 2).contiguous().view(B, T, C)  
         y = self.out_proj(y)
         y = self.resid_dropout(y)
@@ -181,8 +218,8 @@ class LanguageModelGroupedQueryAttention(nn.Module):
 class LanguageModelMLP(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.embd_dim = cfg.lm_hidden_dim
-        self.inter_dim = cfg.lm_inter_dim
+        self.embd_dim = cfg.lm_hidden_dim # 576
+        self.inter_dim = cfg.lm_inter_dim # 1536
 
         self.activation_fn = F.silu
         self.gate_proj = nn.Linear(self.embd_dim, self.inter_dim, bias=False)
@@ -190,6 +227,7 @@ class LanguageModelMLP(nn.Module):
         self.down_proj = nn.Linear(self.inter_dim, self.embd_dim, bias=False)
 
     def forward(self, x):
+        # x is [batch_size, seq_len, embd_dim]
         gate = self.activation_fn(self.gate_proj(x))
         x = self.up_proj(x)
         x = self.down_proj(gate * x)
@@ -206,9 +244,9 @@ class LanguageModelBlock(nn.Module):
         self.norm2 = RMSNorm(cfg) # Post Attention Norm
     
     def forward(self, x, cos, sin, attention_mask=None):
-        res = x
+        res = x # Residual connection
         x = self.norm1(x)
-        x = self.attn(x, cos, sin, attention_mask)
+        x = self.attn(x, cos, sin, attention_mask) # bs, seq_len, dim
         x = res + x
 
         res = x
@@ -223,13 +261,13 @@ class LanguageModel(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.lm_use_tokens = cfg.lm_use_tokens
-        self.lm_tie_weights = cfg.lm_tie_weights
+        self.lm_use_tokens = cfg.lm_use_tokens # False # Whether to use token embeddings or not
+        self.lm_tie_weights = cfg.lm_tie_weights # True # Whether to tie the token embedding and output head weights
 
-        self.token_embedding = nn.Embedding(cfg.lm_vocab_size, cfg.lm_hidden_dim)
+        self.token_embedding = nn.Embedding(cfg.lm_vocab_size, cfg.lm_hidden_dim) # lm_vocab_size=49152, lm_hidden_dim=576
         self.rotary_embd = RotaryEmbedding(cfg)
         self.blocks = nn.ModuleList([
-            LanguageModelBlock(cfg) for _ in range(cfg.lm_n_blocks)
+            LanguageModelBlock(cfg) for _ in range(cfg.lm_n_blocks) # lm_n_blocks=30
         ])
         self.norm = RMSNorm(cfg) # Final Norm
         self.head = nn.Linear(cfg.lm_hidden_dim, cfg.lm_vocab_size, bias=False)
@@ -249,7 +287,7 @@ class LanguageModel(nn.Module):
             module.weight.data.fill_(1.0)
 
     def forward(self, x, attention_mask=None):
-        if self.lm_use_tokens:
+        if self.lm_use_tokens: # If we are using tokens, we expect x to be token indices; or else use hf tokenzizers + embeddings
             x = self.token_embedding(x) # Only embed the inputs when using tokens
         
         B , T, _ = x.size()
